@@ -321,11 +321,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <div class="card-title">Експорт звітності</div>
       <div class="actions">
         <button class="btn btn-green" onclick="downloadExcel()">⬇ Excel (усі 3 місяці)</button>
-        <button class="btn btn-outline" onclick="downloadXML()" style="background:#1d4ed8;color:#fff;border-color:#1d4ed8">⬇ XML (гол. форма + 3 додатки 4ДФ)</button>
+        <button class="btn btn-outline" onclick="downloadXML()" style="background:#1d4ed8;color:#fff;border-color:#1d4ed8">⬇ XML одним ZIP (гол. форма + додатки)</button>
       </div>
-      <div class="alert alert-warn" style="margin-top:14px">
+      <div class="alert alert-info" style="margin-top:14px">
+        <div class="alert-title">📦 Як подати в Кабінет ДПС</div>
+        <div>Качається <b>один ZIP-архів</b> = головна форма + окремий додаток 4ДФ на кожен місяць (так вимагає формат — об'єднати в один файл не можна). <b>Розпакуйте</b> архів у теку → у Кабінеті ДПС «Введення звітності → Імпорт» виділіть <b>усі XML одразу</b> (Ctrl+A) → вони самі зв'яжуться.</div>
+      </div>
+      <div class="alert alert-warn" style="margin-top:10px">
         <div class="alert-title">⚠️ Перед подачею перевірте XML</div>
-        <div>Електронні формати квартальних форм 2026 оновлюються. Згенерований XML — <b>чернетка</b>: обов'язково відкрийте/перевірте його в Кабінеті ДПС (або внесіть числа вручну). Найнадійніший шлях — скопіювати числа з таблиць нижче в Кабінет ДПС / M.E.Doc, а XML програма сформує сама.</div>
+        <div>Згенерований XML — <b>чернетка</b>: обов'язково прогоніть перевірку в Кабінеті ДПС. Якщо зручніше — внесіть числа з таблиць нижче вручну, а XML програма сформує сама.</div>
       </div>
     </div>
 
@@ -1017,6 +1021,38 @@ function generateAppendixXML(m, mainFilename) {
 </DECLAR>`;
 }
 
+// ── Мінімальний ZIP (store, без стиснення) — щоб усі файли качались одним архівом ──
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    let c = (crc ^ bytes[i]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function makeZip(files) {
+  const asc = s => { const a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i) & 0xFF; return a; };
+  const u16 = n => [n & 0xFF, (n >>> 8) & 0xFF];
+  const u32 = n => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
+  const local = [], central = [];
+  let offset = 0;
+  files.forEach(f => {
+    const nameB = asc(f.name), data = f.bytes, crc = crc32(data), sz = data.length;
+    const lfh = new Uint8Array([].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nameB.length), u16(0)));
+    local.push(lfh, nameB, data);
+    central.push(new Uint8Array([].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset))), nameB);
+    offset += lfh.length + nameB.length + sz;
+  });
+  let cdSize = 0; central.forEach(c => cdSize += c.length);
+  const eocd = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cdSize), u32(offset), u16(0)));
+  const parts = [...local, ...central, eocd];
+  let total = 0; parts.forEach(p => total += p.length);
+  const out = new Uint8Array(total); let pos = 0; parts.forEach(p => { out.set(p, pos); pos += p.length; });
+  return out;
+}
+
 function downloadXML() {
   if (!lastQuarter) return;
   const q = lastQuarter;
@@ -1028,26 +1064,21 @@ function downloadXML() {
   const appendices = withData.map(m => ({ month: m.month, filename: dpsFilename('104', m.month, yyyy) }));
 
   const mainFilename = dpsFilename('001', lastMonth, yyyy);
-  const mainXml = generateMainXML(q, appendices);
 
-  function dl(name, str) {
-    const bytes = win1251(str);
-    const blob = new Blob([bytes], { type: 'application/xml;charset=windows-1251' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  dl(mainFilename, mainXml);
-
-  // Місячні додатки 4ДФ
-  let delay = 400;
+  // Збираємо всі файли: головна форма + місячні додатки
+  const files = [{ name: mainFilename, bytes: win1251(generateMainXML(q, appendices)) }];
   withData.forEach((m, i) => {
-    const apdxXml = generateAppendixXML(m, mainFilename);
-    setTimeout(() => dl(appendices[i].filename, apdxXml), delay);
-    delay += 400;
+    files.push({ name: appendices[i].filename, bytes: win1251(generateAppendixXML(m, mainFilename)) });
   });
+
+  // Один ZIP — щоб браузер не блокував кілька завантажень
+  const qName = ['', 'I', 'II', 'III', 'IV'][q.quarter];
+  const zip = makeZip(files);
+  const blob = new Blob([zip], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `4ДФ_${qName}кв_${yyyy}.zip`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─────────────────────────────────────────
