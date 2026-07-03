@@ -872,10 +872,31 @@ function dateStrToday() {
   return String(t.getDate()).padStart(2,'0') + String(t.getMonth()+1).padStart(2,'0') + t.getFullYear();
 }
 
-// Головна форма F0500110 — квартал (PERIOD_MONTH = останній місяць кварталу)
-function generateMainXML(q) {
+// Ім'я файлу у форматі Кабінету ДПС (звірено з експортом Кабінету):
+// {C_REG C_RAJ=0407}{TIN}F05{SUB}10{STAN=1}00000000{CNT=1}{PTYPE=1}{MM}{YYYY}{0407}.XML
+function dpsFilename(sub, month, year) {
+  const mm = String(month).padStart(2, '0');
+  return `04072482911060F05${sub}10` + `1` + `00000000` + `1` + `1` + mm + year + `0407.XML`;
+}
+
+// Головна форма F0500110 — лише ідентифікаційний блок + перелік додатків.
+// Структуру звірено з експортом Кабінету ДПС: жодних сум/ЄСВ-рядків у тілі немає.
+function generateMainXML(q, appendices) {
   const dateStr = dateStrToday();
   const lastMonth = q.months[2];
+  const links = appendices.map((a, i) => `
+            <DOC NUM="${i + 1}" TYPE="1">
+                <C_DOC>F05</C_DOC>
+                <C_DOC_SUB>104</C_DOC_SUB>
+                <C_DOC_VER>10</C_DOC_VER>
+                <C_DOC_TYPE>0</C_DOC_TYPE>
+                <C_DOC_CNT>1</C_DOC_CNT>
+                <C_DOC_STAN>1</C_DOC_STAN>
+                <FILENAME>${a.filename}</FILENAME>
+            </DOC>`).join('');
+  const linkedDocs = appendices.length
+    ? `<LINKED_DOCS>${links}\n        </LINKED_DOCS>`
+    : `<LINKED_DOCS xsi:nil="true"/>`;
   return `<?xml version="1.0" encoding="windows-1251"?><DECLAR xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="F0500110.xsd">
     <DECLARHEAD>
         <TIN>2482911060</TIN>
@@ -887,13 +908,13 @@ function generateMainXML(q) {
         <C_REG>4</C_REG>
         <C_RAJ>7</C_RAJ>
         <PERIOD_MONTH>${lastMonth}</PERIOD_MONTH>
-        <PERIOD_TYPE>2</PERIOD_TYPE>
+        <PERIOD_TYPE>1</PERIOD_TYPE>
         <PERIOD_YEAR>${q.year}</PERIOD_YEAR>
         <C_STI_ORIG>407</C_STI_ORIG>
         <C_DOC_STAN>1</C_DOC_STAN>
-        <LINKED_DOCS xsi:nil="true"/>
+        ${linkedDocs}
         <D_FILL>${dateStr}</D_FILL>
-        <SOFTWARE>BlackSea 4DF v3.0</SOFTWARE>
+        <SOFTWARE>CABINET 0.5.0</SOFTWARE>
     </DECLARHEAD>
     <DECLARBODY>
         <HZ>1</HZ>
@@ -905,11 +926,7 @@ function generateMainXML(q) {
         <HKATOTTG>UA12080090010010311</HKATOTTG>
         <HLOC>УКРАЇНА, ДНІПРОПЕТРОВСЬКА ОБЛ., НІКОПОЛЬСЬКИЙ РАЙОН, ПОКРОВСЬКА ТЕР.ГР., МІСТО ПОКРОВ, ВУЛ. ВЕРБИЦЬКОГО, БУД. 26, КВ. 29</HLOC>
         <HZIP>53304</HZIP>
-        <HTEL>+38(096)-473-77-68</HTEL>
         <HSTI>ГОЛОВНЕ УПРАВЛІННЯ ДПС У ДНІПРОПЕТРОВСЬКІЙ ОБЛАСТІ, НІКОПОЛЬСЬКА ДЕРЖАВНА ПОДАТКОВА ІНСПЕКЦІЯ</HSTI>
-        <R064G3>${q.totGross.toFixed(2)}</R064G3>
-        <R064G4>${q.totVz.toFixed(2)}</R064G4>
-        <HKVED>46.19</HKVED>
         <HFILL>${dateStr}</HFILL>
         <HKBOS>2482911060</HKBOS>
         <HBOS>МІРОШНИЧЕНКО ЄВГЕНІЯ ВАСИЛІВНА</HBOS>
@@ -957,7 +974,7 @@ function generateAppendixXML(m, mainFilename) {
         <C_REG>4</C_REG>
         <C_RAJ>7</C_RAJ>
         <PERIOD_MONTH>${m.month}</PERIOD_MONTH>
-        <PERIOD_TYPE>2</PERIOD_TYPE>
+        <PERIOD_TYPE>1</PERIOD_TYPE>
         <PERIOD_YEAR>${m.year}</PERIOD_YEAR>
         <C_STI_ORIG>407</C_STI_ORIG>
         <C_DOC_STAN>1</C_DOC_STAN>
@@ -973,7 +990,7 @@ function generateAppendixXML(m, mainFilename) {
             </DOC>
         </LINKED_DOCS>
         <D_FILL>${dateStr}</D_FILL>
-        <SOFTWARE>BlackSea 4DF v3.0</SOFTWARE>
+        <SOFTWARE>CABINET 0.5.0</SOFTWARE>
     </DECLARHEAD>
     <DECLARBODY>
         <HZ>1</HZ>
@@ -983,7 +1000,7 @@ function generateAppendixXML(m, mainFilename) {
         <HNAME>МІРОШНИЧЕНКО ЄВГЕНІЯ ВАСИЛІВНА</HNAME>
         <HTIN>2482911060</HTIN>
         <HKATOTTG>UA12080090010010311</HKATOTTG>
-        <R00G02I>${n}</R00G02I>${colG02}${colG03A}${colG03}${colG04A}${colG04}${colG5A}${colG5}${colG05}${colG06D}${colG07D}${colG08}${colG09}
+        <R00G02I>0</R00G02I>${colG02}${colG03A}${colG03}${colG04A}${colG04}${colG5A}${colG5}${colG05}${colG06D}${colG07D}${colG08}${colG09}
         <R01G03A>${m.totGross.toFixed(2)}</R01G03A>
         <R01G03>${m.totGross.toFixed(2)}</R01G03>
         <R01G04A>${m.totPdfo.toFixed(2)}</R01G04A>
@@ -1003,12 +1020,15 @@ function generateAppendixXML(m, mainFilename) {
 function downloadXML() {
   if (!lastQuarter) return;
   const q = lastQuarter;
+  const yyyy = String(q.year);
   const lastMonth = q.months[2];
-  const mmLast = String(lastMonth).padStart(2, '0');
-  const yyyy = q.year;
 
-  const mainFilename = `${yyyy}${mmLast}2482911060F0500110100000000110${mmLast}${yyyy}0000.XML`;
-  const mainXml = generateMainXML(q);
+  // Додатки лише за місяці з виплатами
+  const withData = q.monthResults.filter(m => m.persons.length > 0);
+  const appendices = withData.map(m => ({ month: m.month, filename: dpsFilename('104', m.month, yyyy) }));
+
+  const mainFilename = dpsFilename('001', lastMonth, yyyy);
+  const mainXml = generateMainXML(q, appendices);
 
   function dl(name, str) {
     const bytes = win1251(str);
@@ -1021,14 +1041,11 @@ function downloadXML() {
 
   dl(mainFilename, mainXml);
 
-  // 3 місячні додатки 4ДФ (лише місяці, де є виплати)
+  // Місячні додатки 4ДФ
   let delay = 400;
-  q.monthResults.forEach(m => {
-    if (m.persons.length === 0) return;
-    const mm = String(m.month).padStart(2, '0');
-    const apdxFilename = `${yyyy}${mm}2482911060F0510410100000000110${mm}${yyyy}0000.XML`;
+  withData.forEach((m, i) => {
     const apdxXml = generateAppendixXML(m, mainFilename);
-    setTimeout(() => dl(apdxFilename, apdxXml), delay);
+    setTimeout(() => dl(appendices[i].filename, apdxXml), delay);
     delay += 400;
   });
 }
