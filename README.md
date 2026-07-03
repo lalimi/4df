@@ -57,4 +57,3 @@
 
 - `index.html` — актуальний інструмент (квартальна версія, v3.0), він же онлайн-сторінка.
 - `4df_calculator_original.html` — попередня місячна версія (для довідки/відкату).
-- `.github/workflows/deploy-pages.yml` — автодеплой сторінки на GitHub Pages.
